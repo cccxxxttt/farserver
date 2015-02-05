@@ -17,8 +17,7 @@ typedef struct {
 
 	int pcsrvfd;	// fd from server for pc
 	int pcsrvport;	// pc port num
-	int tcannel_1;	// pc_and_server thread cannel flag;
-	int tcannel_2;	// pc_accept thread cannel flag;
+	int tcannel;	// pc_and_server thread cannel flag;
 
 	int pcstat;		// pc connect or disconnect, 0-pcdis, 1-pcen
 	int roustat;	// route connect or disconnect, 0-roudis, 1-rouen

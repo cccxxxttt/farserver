@@ -31,11 +31,16 @@ int main(void)
 
 		/* pthread process */
 		cl = (sInfo *)malloc(sizeof(sInfo));
-		if(strlen(buf) == 17)
+		if(strlen(buf) > 0)
 			strcpy(cl->mac, buf);
 		cl->routefd = rclient_fd;
+		cl->pcsrvfd = -1;
+		cl->pcsrvport = -1;
+		cl->pcstat = 0;
 		cl->roustat = 1;	// route connect
 		list_add_tail(&cl->list, &clients);
+
+		printf("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
 	}
 
 	return 0;

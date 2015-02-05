@@ -16,8 +16,33 @@ int deta_pthread_create(pthread_t *thread, void *(*start_routine) (void *), void
 	return 0;
 }
 
+ssize_t tcp_read(int fd, void *buf, size_t count)
+{
+	int ret, len;
+	char tmp[BUFSIZE];
+
+	len = count;
+	while(len > 0) {
+		memset(tmp, '\0', sizeof(tmp));
+
+		if(len > BUFSIZE) {
+			if((ret = read(fd, tmp, BUFSIZE)) < 0)
+				continue;
+		}
+		else {
+			if((ret = read(fd, tmp, len)) < 0)
+				continue;
+		}
+
+		len -= ret;
+		strcat(buf, tmp);
+	}
+
+	return ret;
+}
+
 /* analyze data, eg: 11:22:33:44:55:66;0; (mac;en;) */
-int phpcdata(char mac[], char en, char buf[])
+int phpcdata(char mac[], char *en, char buf[])
 {
 	char *p;
 
@@ -27,7 +52,7 @@ int phpcdata(char mac[], char en, char buf[])
 
 	/* en */
 	p = strtok(NULL, ";");
-	en = *p;
+	*en = *p;
 
 	return 0;
 }
@@ -52,19 +77,24 @@ int port_create()
 }
 
 /* report to php */
-int port_report(int webfd, int port)
+int port_report(int webfd, int port, int en)
 {
 	char buf[BUFSIZE];
+	char *con = " ";
 	int ret;
 
+	if(en == 0)
+		con = "  has break!!!!!!!!";
+
 	memset(buf, '\0', sizeof(buf));
-	sprintf(buf, "%s:%d\r\n", SRV_DOMAIN, port);
+	sprintf(buf, "%s:%d%s\r\n", SRV_DOMAIN, port, con);
 
 	if((ret = write(webfd, buf, BUFSIZE)) <= 0)
 		return -1;
 
 	return 0;
 }
+
 
 int sock_server(int port)
 {
@@ -118,7 +148,9 @@ void *web_and_c(void *arg)
 		/* data analyze */
 		memset(macmsg, '\0', sizeof(macmsg));
 		en = '0';
-		phpcdata(macmsg, en, buf);
+		phpcdata(macmsg, &en, buf);
+
+		printf("macmsg=%s, en=%c\n", macmsg, en);
 
 		is_mac = 0;
 		list_for_each_entry(cl, &clients, list) {
@@ -130,30 +162,32 @@ void *web_and_c(void *arg)
 
 		/* find the route */
 		if((is_mac==1) && (cl->roustat==1)) {
-
 			/* control */
 			if(en == '1') {
-				/* create port */
-				pcsrv_port = port_create();
+				if(cl->pcsrvport == -1) {
+					/* create port */
+					pcsrv_port = port_create();
 
-				pcsrv_fd = sock_server(pcsrv_port);
-				cl->pcsrvfd = pcsrv_fd;
-				cl->pcsrvport = pcsrv_port;
+					pcsrv_fd = sock_server(pcsrv_port);
+					cl->pcsrvfd = pcsrv_fd;
+					cl->pcsrvport = pcsrv_port;
 
-				/* pc <--> server */
-				deta_pthread_create(&tid, pc_accept, cl);
-				cl->tcannel_1 = 0;
-				cl->tcannel_2 = 0;
+					/* pc <--> server */
+					deta_pthread_create(&tid, pc_accept, cl);
+					cl->tcannel = 0;
+				}
 
 				/* report port to php */
-				port_report(web_fd, pcsrv_port);
+				port_report(web_fd, cl->pcsrvport, 1);
 			}
 			/* uncontrol */
 			else {
-				cl->tcannel_2 = 1;		// cannel pc_and_server thread
+				cl->tcannel = 1;		// cannel pc_and_server thread
 				cl->pcstat = 0;
-				if(cl->pcsrvfd != 0) { close(cl->pcsrvfd);  cl->pcsrvfd=0; }
-				arrayNum[cl->pcsrvport] = 0;
+				if(cl->pcsrvfd != 0) { close(cl->pcsrvfd);  cl->pcsrvfd=-1; }
+				arrayNum[cl->pcsrvport - 10000] = 0;
+				port_report(web_fd, cl->pcsrvport, 0);
+				cl->pcsrvport = -1;
 			}
 		}
 
@@ -172,11 +206,12 @@ void *pc_accept(void *arg)
 	int pcfd;
 	pthread_t tid;
 
-	cl->pcstat= 1;	// route connect
+	cl->pcstat= 1;			// pc connect
 
 	while(1) {
-		if(cl->tcannel_1 == 1)		// cannel thread
+		if(cl->tcannel == 1) {		// cannel thread
 			break;
+		}
 
 		if(cl->roustat == 0)
 			break;
@@ -184,13 +219,17 @@ void *pc_accept(void *arg)
 		if( (pcfd = accept(cl->pcsrvfd, (struct sockaddr *)&client_addr, &addrlen)) < 0)
 			continue;
 
-		/* pc <--> server have some clients */
+		printf("\npc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
+
+		/* pc <--> server */
 		pcInfo *pcinfo = (pcInfo *)malloc(sizeof(pcInfo));
 		pcinfo->pc_client_fd= pcfd;
 		pcinfo->cl = cl;
 
 		deta_pthread_create(&tid, pc_and_server, pcinfo);
 	}
+
+	close(pcfd);
 
 	pthread_exit(NULL);
 }
@@ -201,60 +240,64 @@ void *pc_and_server(void *arg)
 	char urlmsg[TCPSIZE];
 	int ret;
 	sInfo *cl = pcinfo->cl;
+	printf("com~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
 
-	while(1) {
-		if(cl->tcannel_2 == 1) {		// cannel thread
-			cl->tcannel_1 = 1;
+	/* route connect, have routefd */
+	memset(urlmsg, '\0', sizeof(urlmsg));
+	if(cl->roustat==1 && cl->pcstat==1) {
+		/* read form pc */
+		if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
 			close(pcinfo->pc_client_fd);
-			free(pcinfo);
-			break;
+			pthread_exit(NULL);
 		}
 
-		/* route connect, have routefd */
-		if(cl->roustat==1 && cl->pcstat==1) {
-			/* read form pc */
-			if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) < 0)
-				continue;
+		pthread_mutex_lock(&mutex);		// only allow one write, and read once
 
-			if(ret == 0) {
-				cl->pcstat = 0;
-				continue;
-			}
-
-			pthread_mutex_lock(&mutex);		// only allow one write, and read once
-
-			/* write to route */
-			if((ret = write(cl->routefd, urlmsg, TCPSIZE)) < 0)
-				continue;
-
-			if(ret == 0) {
-				cl->pcstat = 0;
-				cl->roustat = 0;
-				break;
-			}
-
-			/* pc connect, have pcfd */
-			if(cl->pcstat == 1) {
-				/* read form route */
-				if((ret = read(cl->routefd, urlmsg, TCPSIZE)) < 0)
-					continue;
+		do {
+			if(urlmsg != NULL) {
+				/* write to route */
+				if((ret = write(cl->routefd, urlmsg, TCPSIZE)) < 0){		// send TCPSIZE
+					close(pcinfo->pc_client_fd);
+					break;
+				}
 
 				if(ret == 0) {
+					cl->pcstat = 0;
 					cl->roustat = 0;
-					cl->pcstat = 0;
-					continue;
+					close(pcinfo->pc_client_fd);
+					break;
 				}
-
-				/* write to pc */
-				if((ret = write(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) < 0) {
+				printf("pc : %s \n", urlmsg);
+				/* pc connect, have pcfd */
+				memset(urlmsg, '\0', sizeof(urlmsg));
+				if(cl->pcstat == 1) {
+					/* read form route */
+					if((ret = tcp_read(cl->routefd, urlmsg, TCPSIZE)) < 0){		// read TCPSIZE
+						close(pcinfo->pc_client_fd);
+						break;
+					}
+					printf("route read : %s \n", urlmsg);
+					if(ret == 0) {
+						cl->roustat = 0;
+						cl->pcstat = 0;
+						close(pcinfo->pc_client_fd);
+						break;
+					}
+					printf("read from route ok!!!!\n");
+					/* write to pc */
+					if((ret = write(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
+						close(pcinfo->pc_client_fd);
+						break;
+					}
 				}
-				if(ret == 0)
-					cl->pcstat = 0;
 			}
+		}while(0);
 
-			pthread_mutex_unlock(&mutex);
-		}
+		pthread_mutex_unlock(&mutex);
 	}
+
+	close(pcinfo->pc_client_fd);
+	free(pcinfo);
 
 	pthread_exit(NULL);
 }
