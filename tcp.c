@@ -1,8 +1,6 @@
 #include "tcp.h"
 
 extern struct list_head clients;
-pthread_mutex_t mutex = PTHREAD_MUTEX_INITIALIZER;
-
 
 int deta_pthread_create(pthread_t *thread, void *(*start_routine) (void *), void *arg)
 {
@@ -95,6 +93,62 @@ int port_report(int webfd, int port, int en)
 	return 0;
 }
 
+char SRV_IP[17];
+int getlocalip(void)
+{
+    int sfd, intr;
+    struct ifreq buf[16];
+    struct ifconf ifc;
+	char *ip;
+
+    sfd = socket (AF_INET, SOCK_DGRAM, 0);
+    if (sfd < 0)
+        return -1;
+
+    ifc.ifc_len = sizeof(buf);
+    ifc.ifc_buf = (caddr_t)buf;
+    if (ioctl(sfd, SIOCGIFCONF, (char *)&ifc))
+        return -1;
+
+    intr = ifc.ifc_len / sizeof(struct ifreq);
+    while (intr-- > 0 && ioctl(sfd, SIOCGIFADDR, (char *)&buf[intr]));
+
+    close(sfd);
+
+    ip = inet_ntoa(((struct sockaddr_in*)(&buf[intr].ifr_addr))->sin_addr);
+	strcpy(SRV_IP, ip);
+
+	printf("local_ip = %s\n", SRV_IP);
+
+	return 0;
+}
+
+
+/* analyse response url data, judge connect */
+int response_close(char urlmsg[])
+{
+	char *p = NULL, *q = NULL;
+	int ret = 0, i;
+	char buf[BUFSIZE];
+
+	p = strstr(urlmsg, "Connection:");
+	if(p != NULL) {
+		/* get line --  Connection: .....*/
+		q = p;
+		i = 0;
+		while(*(q) != '\n') {
+			buf[i++] = *q;
+			q++;
+		}
+		buf[i] = '\0';
+
+		p = strstr(buf, "close");
+		if(p != NULL)
+			ret = CONCLOSE;
+	}
+
+	return ret;
+}
 
 int sock_server(int port)
 {
@@ -242,21 +296,22 @@ void *pc_and_server(void *arg)
 	sInfo *cl = pcinfo->cl;
 	printf("com~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
 
-	/* route connect, have routefd */
-	memset(urlmsg, '\0', sizeof(urlmsg));
-	if(cl->roustat==1 && cl->pcstat==1) {
-		/* read form pc */
-		if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
-			close(pcinfo->pc_client_fd);
-			pthread_exit(NULL);
-		}
+	while(1) {
+		/* route connect, have routefd */
+		memset(urlmsg, '\0', sizeof(urlmsg));
+		if(cl->roustat==1 && cl->pcstat==1) {
+			/* read form pc */
+			if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
+				close(pcinfo->pc_client_fd);
+				pthread_exit(NULL);
+			}
+			printf("pc : %s \n", urlmsg);
+			pthread_mutex_lock(&(cl->mutex));		// only allow one write, and read once
 
-		pthread_mutex_lock(&mutex);		// only allow one write, and read once
 
-		do {
 			if(urlmsg != NULL) {
 				/* write to route */
-				if((ret = write(cl->routefd, urlmsg, TCPSIZE)) < 0){		// send TCPSIZE
+				if((ret = write(cl->routefd, urlmsg, strlen(urlmsg))) < 0){		// send TCPSIZE
 					close(pcinfo->pc_client_fd);
 					break;
 				}
@@ -267,15 +322,16 @@ void *pc_and_server(void *arg)
 					close(pcinfo->pc_client_fd);
 					break;
 				}
-				printf("pc : %s \n", urlmsg);
+
 				/* pc connect, have pcfd */
 				memset(urlmsg, '\0', sizeof(urlmsg));
 				if(cl->pcstat == 1) {
 					/* read form route */
-					if((ret = tcp_read(cl->routefd, urlmsg, TCPSIZE)) < 0){		// read TCPSIZE
+					if((ret = read(cl->routefd, urlmsg, TCPSIZE)) < 0){		// read TCPSIZE
 						close(pcinfo->pc_client_fd);
 						break;
 					}
+
 					printf("route read : %s \n", urlmsg);
 					if(ret == 0) {
 						cl->roustat = 0;
@@ -283,20 +339,26 @@ void *pc_and_server(void *arg)
 						close(pcinfo->pc_client_fd);
 						break;
 					}
-					printf("read from route ok!!!!\n");
+					//printf("read from route ok!!!!\n");
+
 					/* write to pc */
-					if((ret = write(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
+					if((ret = write(pcinfo->pc_client_fd, urlmsg, strlen(urlmsg))) <= 0) {
+						close(pcinfo->pc_client_fd);
+						break;
+					}
+
+					/* response say connect: close */
+					if(response_close(urlmsg) == CONCLOSE) {
 						close(pcinfo->pc_client_fd);
 						break;
 					}
 				}
 			}
-		}while(0);
+		}
 
-		pthread_mutex_unlock(&mutex);
+		pthread_mutex_unlock(&(cl->mutex));
 	}
 
-	close(pcinfo->pc_client_fd);
 	free(pcinfo);
 
 	pthread_exit(NULL);

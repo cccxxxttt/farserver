@@ -13,6 +13,8 @@ int main(void)
 	sInfo *cl;
 	pthread_t tid;
 
+	getlocalip();
+
 	/* server: web <--> c */
 	cfd = sock_server(C_PORT);
 	deta_pthread_create(&tid, web_and_c, (void *)cfd);
@@ -38,6 +40,7 @@ int main(void)
 		cl->pcsrvport = -1;
 		cl->pcstat = 0;
 		cl->roustat = 1;	// route connect
+		pthread_mutex_init(&(cl->mutex), NULL);
 		list_add_tail(&cl->list, &clients);
 
 		printf("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
