@@ -326,70 +326,54 @@ void *pc_and_server(void *arg)
 		pthread_exit(NULL);
 	}
 	modify_connect_close(urlmsg);
-	//printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
+
+	printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
 
 	pthread_mutex_lock(&(cl->mutex));		// deal one connect until it closed
 
-	//while(1)
-	do{
-		/* route connect, have routefd */
-		if(cl->roustat==1 && cl->pcstat==1) {
-			if(strlen(urlmsg) != 0) {
-				/* write to route */
-				if((ret = write(cl->routefd, urlmsg, strlen(urlmsg))) < 0){		// send TCPSIZE
-					close(pcinfo->pc_client_fd);
-					break;
-				}
-
-				if(ret == 0) {
-					cl->pcstat = 0;
-					cl->roustat = 0;
-					close(pcinfo->pc_client_fd);
-					break;
-				}
-
-				/* pc connect, have pcfd */
-				memset(urlmsg, '\0', sizeof(urlmsg));
-				if(cl->pcstat == 1) {
-					/* read form route */
-					if((ret = read(cl->routefd, urlmsg, TCPSIZE)) < 0){		// read TCPSIZE
-						close(pcinfo->pc_client_fd);
-						break;
-					}
-
-					//printf("route read : %s \n", urlmsg);
-					if(ret == 0) {
-						cl->roustat = 0;
-						cl->pcstat = 0;
-						close(pcinfo->pc_client_fd);
-						break;
-					}
-					//printf("read from route ok!!!!\n");
-
-					/* write to pc */
-					if((ret = write(pcinfo->pc_client_fd, urlmsg, strlen(urlmsg))) <= 0) {
-						close(pcinfo->pc_client_fd);
-						break;
-					}
-
-					/* response say connect: close */
-					if(response_close(urlmsg) == CONCLOSE) {
-						close(pcinfo->pc_client_fd);
-						break;
-					}
-				}
+	/* route connect, have routefd */
+	if(cl->roustat==1 && cl->pcstat==1) {
+		if(strlen(urlmsg) != 0) {
+			/* write to route */
+			if((ret = write(cl->routefd, urlmsg, strlen(urlmsg))) < 0){		// send TCPSIZE
+				close(pcinfo->pc_client_fd);
+				pthread_exit(NULL);
 			}
 
-//			memset(urlmsg, '\0', sizeof(urlmsg));
-//			/* read form pc */
-//			if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
-//				close(pcinfo->pc_client_fd);
-//				pthread_exit(NULL);
-//			}
-//			printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
-		}
+			if(ret == 0) {
+				cl->pcstat = 0;
+				cl->roustat = 0;
+				close(pcinfo->pc_client_fd);
+				pthread_exit(NULL);
+			}
 
-	}while(0);
+			/* pc connect, have pcfd */
+			memset(urlmsg, '\0', sizeof(urlmsg));
+			if(cl->pcstat == 1) {
+				/* read form route */
+				if((ret = read(cl->routefd, urlmsg, TCPSIZE)) < 0){		// read TCPSIZE
+					close(pcinfo->pc_client_fd);
+					pthread_exit(NULL);
+				}
+
+				printf("route read-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
+				if(ret == 0) {
+					cl->roustat = 0;
+					cl->pcstat = 0;
+					close(pcinfo->pc_client_fd);
+					pthread_exit(NULL);
+				}
+				//printf("read from route ok!!!!\n");
+
+				/* write to pc */
+				if((ret = write(pcinfo->pc_client_fd, urlmsg, strlen(urlmsg))) <= 0) {
+					close(pcinfo->pc_client_fd);
+					printf("@@@@@@@@ write to pc probrom!!\n");
+					pthread_exit(NULL);
+				}
+			}
+		}
+	}
 
 	free(pcinfo);
 	if(pcinfo->pc_client_fd > 2)
