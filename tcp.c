@@ -150,6 +150,29 @@ int response_close(char urlmsg[])
 	return ret;
 }
 
+/* change http1.1 long connect, Connection: close */
+void modify_connect_close(char urlmsg[])
+{
+	char *p, *q;
+	char tempmsg[TCPSIZE];
+
+	strcpy(tempmsg, urlmsg);
+
+	p = strstr(tempmsg, "Connection: keep-alive");		// request: keep-alive; repose: Keep-Alive
+	if(p != NULL) {
+		q = p;
+		while(*(q++) != '\n');
+	} else {
+		return ;
+	}
+
+	memset(urlmsg, '\0', TCPSIZE);
+	strncpy(urlmsg, tempmsg, p-tempmsg);
+	strcat(urlmsg, "Connection: close\n");
+	strcat(urlmsg, q);
+}
+
+
 int sock_server(int port)
 {
 	int sock_fd = -1;
@@ -296,20 +319,22 @@ void *pc_and_server(void *arg)
 	sInfo *cl = pcinfo->cl;
 	printf("com~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
 
-	while(1) {
+	memset(urlmsg, '\0', sizeof(urlmsg));
+	/* read form pc */
+	if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
+		close(pcinfo->pc_client_fd);
+		pthread_exit(NULL);
+	}
+	modify_connect_close(urlmsg);
+	//printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
+
+	pthread_mutex_lock(&(cl->mutex));		// deal one connect until it closed
+
+	//while(1)
+	do{
 		/* route connect, have routefd */
-		memset(urlmsg, '\0', sizeof(urlmsg));
 		if(cl->roustat==1 && cl->pcstat==1) {
-			/* read form pc */
-			if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
-				close(pcinfo->pc_client_fd);
-				pthread_exit(NULL);
-			}
-			printf("pc : %s \n", urlmsg);
-			pthread_mutex_lock(&(cl->mutex));		// only allow one write, and read once
-
-
-			if(urlmsg != NULL) {
+			if(strlen(urlmsg) != 0) {
 				/* write to route */
 				if((ret = write(cl->routefd, urlmsg, strlen(urlmsg))) < 0){		// send TCPSIZE
 					close(pcinfo->pc_client_fd);
@@ -332,7 +357,7 @@ void *pc_and_server(void *arg)
 						break;
 					}
 
-					printf("route read : %s \n", urlmsg);
+					//printf("route read : %s \n", urlmsg);
 					if(ret == 0) {
 						cl->roustat = 0;
 						cl->pcstat = 0;
@@ -354,12 +379,22 @@ void *pc_and_server(void *arg)
 					}
 				}
 			}
+
+//			memset(urlmsg, '\0', sizeof(urlmsg));
+//			/* read form pc */
+//			if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
+//				close(pcinfo->pc_client_fd);
+//				pthread_exit(NULL);
+//			}
+//			printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
 		}
 
-		pthread_mutex_unlock(&(cl->mutex));
-	}
+	}while(0);
 
 	free(pcinfo);
+	if(pcinfo->pc_client_fd > 2)
+		close(pcinfo->pc_client_fd);
+	pthread_mutex_unlock(&(cl->mutex));
 
 	pthread_exit(NULL);
 }
