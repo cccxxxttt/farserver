@@ -155,21 +155,115 @@ void modify_connect_close(char urlmsg[])
 {
 	char *p, *q;
 	char tempmsg[TCPSIZE];
+	char *src = "Connection: keep-alive";
+	char *dst = "Connection: close";
 
 	strcpy(tempmsg, urlmsg);
 
-	p = strstr(tempmsg, "Connection: keep-alive");		// request: keep-alive; repose: Keep-Alive
+	p = strstr(tempmsg, src);		// request: keep-alive; repose: Keep-Alive
 	if(p != NULL) {
-		q = p;
-		while(*(q++) != '\n');
+		q = p + strlen(src);
 	} else {
 		return ;
 	}
 
 	memset(urlmsg, '\0', TCPSIZE);
 	strncpy(urlmsg, tempmsg, p-tempmsg);
-	strcat(urlmsg, "Connection: close\n");
+	strcat(urlmsg, dst);
 	strcat(urlmsg, q);
+}
+
+
+void modify_http_head(char urlmsg[])
+{
+	char *p, *q;
+	char tempmsg[TCPSIZE];
+	char *src = "HTTP/1.1";
+	char *dst = "HTTP/1.0";
+
+	strcpy(tempmsg, urlmsg);
+
+	p = strstr(tempmsg, src);		// strstr can find first HTTP/1.1
+	if(p != NULL) {
+		q = p + strlen(src);
+	} else {
+		return ;
+	}
+
+	memset(urlmsg, '\0', TCPSIZE);
+	strncpy(urlmsg, tempmsg, p-tempmsg);
+	strcat(urlmsg, dst);
+	strcat(urlmsg, q);
+}
+
+int read_line(int sockfd, char buf[])
+{
+	char *temp=buf;
+	char c;
+	int n;
+
+	while(1)
+	{
+		n=read(sockfd,&c,1);
+		if(n<0)
+			return -1;
+		else {
+			*temp++=c;
+
+			if(c=='\n')
+				break;
+		}
+	}
+	*temp = '\0';
+
+	return strlen(buf);
+}
+
+// 如果采用短连接，则直接可以通过服务器关闭连接来确定消息的传输长度
+ssize_t http_read(int fd, char buf[], size_t count)
+{
+	int ret, len, i;
+	int urlsize;
+	char msgsize[BUFSIZE], size[6];
+	char temp[BUFSIZE];
+	char *p;
+
+	ret = read_line(fd, msgsize);
+	if(ret <= 0)
+		return -1;
+
+	/* get urlmsg size: UrlSize = xxx\r\n */
+	i = 0;
+	p = msgsize + strlen("UrlSize = ");
+	while(*p != '\r')
+		size[i++] = *(p++);
+	size[i] = '\0';
+	urlsize = atoi(size);
+
+	//printf("urlsize = %d, urlsize=%s, size=%s\n", urlsize, msgsize, size);
+
+	/* read url msg */
+	ret = 0;
+	if(urlsize > 0) {
+		len = urlsize;
+		while(len > 0) {
+			memset(temp, '\0', BUFSIZE);
+
+			if(len > BUFSIZE)
+				ret = read(fd, temp, BUFSIZE);
+			else
+				ret = read(fd, temp, len);
+
+			len -= ret;
+
+			if(ret > 0)
+				strcat(buf, temp);
+			else if(ret == 0)
+				break;
+		}
+	}
+
+	return strlen(buf);
 }
 
 
@@ -302,7 +396,7 @@ void *pc_accept(void *arg)
 		pcInfo *pcinfo = (pcInfo *)malloc(sizeof(pcInfo));
 		pcinfo->pc_client_fd= pcfd;
 		pcinfo->cl = cl;
-
+		printf("\n@@@@@pc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
 		deta_pthread_create(&tid, pc_and_server, pcinfo);
 	}
 
@@ -325,6 +419,7 @@ void *pc_and_server(void *arg)
 		close(pcinfo->pc_client_fd);
 		pthread_exit(NULL);
 	}
+	modify_http_head(urlmsg);
 	modify_connect_close(urlmsg);
 
 	printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
@@ -351,33 +446,33 @@ void *pc_and_server(void *arg)
 			memset(urlmsg, '\0', sizeof(urlmsg));
 			if(cl->pcstat == 1) {
 				/* read form route */
-				if((ret = read(cl->routefd, urlmsg, TCPSIZE)) < 0){		// read TCPSIZE
+				if((ret = http_read(cl->routefd, urlmsg, TCPSIZE)) < 0){		// read TCPSIZE
 					close(pcinfo->pc_client_fd);
 					pthread_exit(NULL);
 				}
 
-				printf("route read-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
+				printf("route read-%d-%d : %s \n", pcinfo->pc_client_fd, ret, urlmsg);
 				if(ret == 0) {
 					cl->roustat = 0;
 					cl->pcstat = 0;
 					close(pcinfo->pc_client_fd);
 					pthread_exit(NULL);
 				}
-				//printf("read from route ok!!!!\n");
 
 				/* write to pc */
 				if((ret = write(pcinfo->pc_client_fd, urlmsg, strlen(urlmsg))) <= 0) {
 					close(pcinfo->pc_client_fd);
-					printf("@@@@@@@@ write to pc probrom!!\n");
 					pthread_exit(NULL);
 				}
 			}
 		}
 	}
 
-	free(pcinfo);
+	pcinfo->cl = NULL;
 	if(pcinfo->pc_client_fd > 2)
 		close(pcinfo->pc_client_fd);
+	free(pcinfo);
+
 	pthread_mutex_unlock(&(cl->mutex));
 
 	pthread_exit(NULL);
