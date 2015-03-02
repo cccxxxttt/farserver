@@ -390,13 +390,13 @@ void *pc_accept(void *arg)
 		if( (pcfd = accept(cl->pcsrvfd, (struct sockaddr *)&client_addr, &addrlen)) < 0)
 			continue;
 
-		printf("\npc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
+		//printf("\npc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
 
 		/* pc <--> server */
 		pcInfo *pcinfo = (pcInfo *)malloc(sizeof(pcInfo));
 		pcinfo->pc_client_fd= pcfd;
 		pcinfo->cl = cl;
-		printf("\n@@@@@pc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
+
 		deta_pthread_create(&tid, pc_and_server, pcinfo);
 	}
 
@@ -411,7 +411,6 @@ void *pc_and_server(void *arg)
 	char urlmsg[TCPSIZE];
 	int ret;
 	sInfo *cl = pcinfo->cl;
-	printf("com~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
 
 	memset(urlmsg, '\0', sizeof(urlmsg));
 	/* read form pc */
@@ -422,9 +421,10 @@ void *pc_and_server(void *arg)
 	modify_http_head(urlmsg);
 	modify_connect_close(urlmsg);
 
-	printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
-
 	pthread_mutex_lock(&(cl->mutex));		// deal one connect until it closed
+
+	printf("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
+	//printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
 
 	/* route connect, have routefd */
 	if(cl->roustat==1 && cl->pcstat==1) {
@@ -451,7 +451,8 @@ void *pc_and_server(void *arg)
 					pthread_exit(NULL);
 				}
 
-				printf("route read-%d-%d : %s \n", pcinfo->pc_client_fd, ret, urlmsg);
+				printf("route-%d-%d\n", pcinfo->pc_client_fd, ret);
+				//printf("route read-%d-%d : %s \n", pcinfo->pc_client_fd, ret, urlmsg);
 				if(ret == 0) {
 					cl->roustat = 0;
 					cl->pcstat = 0;
