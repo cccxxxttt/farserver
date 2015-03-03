@@ -14,31 +14,6 @@ int deta_pthread_create(pthread_t *thread, void *(*start_routine) (void *), void
 	return 0;
 }
 
-ssize_t tcp_read(int fd, void *buf, size_t count)
-{
-	int ret, len;
-	char tmp[BUFSIZE];
-
-	len = count;
-	while(len > 0) {
-		memset(tmp, '\0', sizeof(tmp));
-
-		if(len > BUFSIZE) {
-			if((ret = read(fd, tmp, BUFSIZE)) < 0)
-				continue;
-		}
-		else {
-			if((ret = read(fd, tmp, len)) < 0)
-				continue;
-		}
-
-		len -= ret;
-		strcat(buf, tmp);
-	}
-
-	return ret;
-}
-
 /* analyze data, eg: 11:22:33:44:55:66;0; (mac;en;) */
 int phpcdata(char mac[], char *en, char buf[])
 {
@@ -267,6 +242,88 @@ ssize_t http_read(int fd, char buf[], size_t count)
 }
 
 
+ssize_t pc_read(int fd, char buf[], size_t count)
+{
+	int ret, len, i;
+	char method[BUFSIZE], lineBuf[BUFSIZE], textBuf[BUFSIZE];
+	char *p;
+	char size[20];
+	int textLength = 0;
+
+	/* read first line */
+	ret = read_line(fd, method);
+	if(ret <= 0)
+		return -1;
+
+	strcat(buf, method);
+
+	/* GET: has head msg, no data msg */
+	if(strncmp(method, "GET", 3) == 0) {
+		while(1) {
+			ret = read_line(fd, lineBuf);
+			if(ret < 0)
+				return -1;
+			else
+				strcat(buf, lineBuf);
+
+			if(strcmp(lineBuf, "\r\n") == 0)		// head end
+				break;
+		}
+	}
+
+	/* POST: has head msg and data msg */
+	else if(strncmp(method, "POST", 4) == 0) {
+		/* head */
+		while(1) {
+			ret = read_line(fd, lineBuf);
+			if(ret < 0)
+				return -1;
+			else
+				strcat(buf, lineBuf);
+
+			if(strncmp(lineBuf, "Content-Length:", 15) == 0) {
+				p = lineBuf + 15;
+				while(*p++ != ' ');
+
+				i = 0;
+				while(*p != '\r')
+					size[i++] = *p++;
+				size[i] = '\0';
+				textLength = atoi(size);
+
+				printf("size=%s, textLength = %d\n", size, textLength);
+			}
+
+			if(strcmp(lineBuf, "\r\n") == 0)		// head end
+				break;
+		}
+
+		printf("head msg=%s\n", buf);
+
+		/* data */
+		if(textLength > 0) {
+			len = textLength;
+			while(len > 0) {
+				memset(textBuf, '\0', BUFSIZE);
+				if(len > BUFSIZE)
+					ret = read(fd, textBuf, BUFSIZE);
+				else
+					ret = read(fd, textBuf, len);
+
+				len -= ret;
+
+				if(ret > 0)
+					strcat(buf, textBuf);
+				else if(ret <= 0)
+					break;
+			}
+		}
+	}
+
+	return strlen(buf);
+}
+
+
 int sock_server(int port)
 {
 	int sock_fd = -1;
@@ -414,7 +471,7 @@ void *pc_and_server(void *arg)
 
 	memset(urlmsg, '\0', sizeof(urlmsg));
 	/* read form pc */
-	if((ret = read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
+	if((ret = pc_read(pcinfo->pc_client_fd, urlmsg, TCPSIZE)) <= 0) {
 		close(pcinfo->pc_client_fd);
 		pthread_exit(NULL);
 	}
