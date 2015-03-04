@@ -195,13 +195,14 @@ int read_line(int sockfd, char buf[])
 }
 
 // 如果采用短连接，则直接可以通过服务器关闭连接来确定消息的传输长度
-ssize_t http_read(int fd, char buf[], size_t count)
+ssize_t http_read(int fd, char buf[])
 {
-	int ret, len, i;
-	int urlsize;
+	int ret, i;
+	int urlsize = 0;
 	char msgsize[BUFSIZE], size[6];
 	char temp[BUFSIZE];
 	char *p;
+	int retsize = 0;
 
 	ret = read_line(fd, msgsize);
 	if(ret <= 0)
@@ -218,27 +219,24 @@ ssize_t http_read(int fd, char buf[], size_t count)
 	//printf("urlsize = %d, urlsize=%s, size=%s\n", urlsize, msgsize, size);
 
 	/* read url msg */
-	ret = 0;
-	if(urlsize > 0) {
-		len = urlsize;
-		while(len > 0) {
-			memset(temp, '\0', BUFSIZE);
+	while(urlsize > 0) {
+		memset(temp, '\0', BUFSIZE);
 
-			if(len > BUFSIZE)
-				ret = read(fd, temp, BUFSIZE);
-			else
-				ret = read(fd, temp, len);
+		if(urlsize > BUFSIZE)
+			ret = read(fd, temp, BUFSIZE);
+		else
+			ret = read(fd, temp, urlsize);
 
-			len -= ret;
+		if(ret > 0)
+			strcat(buf, temp);
+		else if(ret <= 0)
+			break;
 
-			if(ret > 0)
-				strcat(buf, temp);
-			else if(ret == 0)
-				break;
-		}
+		urlsize -= ret;
+		retsize += ret;
 	}
 
-	return strlen(buf);
+	return retsize;
 }
 
 
@@ -407,6 +405,7 @@ ssize_t pc_read_head(int pcfd, char urlmsg[], unsigned long *textLength)
 	char method[BUFSIZE], lineBuf[BUFSIZE];
 	char *p;
 	char size[20];
+	int retsize = 0;
 
 	/* read first line */
 	ret = read_line(pcfd, method);
@@ -414,6 +413,7 @@ ssize_t pc_read_head(int pcfd, char urlmsg[], unsigned long *textLength)
 		return -1;
 
 	strcat(urlmsg, method);
+	retsize += ret;
 
 	/* head */
 	while(1) {
@@ -422,6 +422,8 @@ ssize_t pc_read_head(int pcfd, char urlmsg[], unsigned long *textLength)
 			return -1;
 		else
 			strcat(urlmsg, lineBuf);
+
+		retsize += ret;
 
 		if(strcmp(lineBuf, "\r\n") == 0)		// head end
 			break;
@@ -445,7 +447,7 @@ ssize_t pc_read_head(int pcfd, char urlmsg[], unsigned long *textLength)
 		}
 	}
 
-	return 0;
+	return retsize;
 }
 
 ssize_t pc_read_send_data(int pcfd, int routefd, unsigned long textLength)
@@ -486,18 +488,23 @@ int route_to_pc(int pcfd, int routefd)
 	while(1) {
 		/* read form route */
 		memset(urlmsg, '\0', sizeof(urlmsg));
-		if((ret = http_read(routefd, urlmsg, TCPSIZE)) <= 0)		// read TCPSIZE
+		if((ret = http_read(routefd, urlmsg)) <= 0)
 			return -1;
 
 		if(strcmp(urlmsg, "end\r\n") == 0)
 			break;
 
-		//printf("route-%d-%d\n", pcfd, ret);
-		printf("route read-%d-%d : %s \n", pcfd, ret, urlmsg);
+		printf("route-%d-%d-%d\n", pcfd, ret, strlen(urlmsg));
+		if(ret != strlen(urlmsg)) {
+			printf("urlmsg=%s\n", urlmsg);
+		}
+		//printf("route read-%d-%d : %s \n", pcfd, ret, urlmsg);
 
 		/* write to pc */
 		if((ret = write(pcfd, urlmsg, ret)) <= 0)
 			return -1;
+
+		printf("write over~~~~~~~~~\n");
 	}
 
 	return 0;
@@ -514,6 +521,7 @@ void *pc_and_server(void *arg)
 	pthread_mutex_lock(&(cl->mutex));		// deal one connect until it closed
 
 	if(cl->roustat==1 && cl->pcstat==1) {
+		printf("\n########################\n");
 		/* read head form pc */
 		textLength = 0;
 		memset(urlmsg, '\0', sizeof(urlmsg));
@@ -526,7 +534,7 @@ void *pc_and_server(void *arg)
 		modify_connect_close(urlmsg);
 
 		//printf("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
-		printf("pc-%d : %s \n", pcinfo->pc_client_fd, urlmsg);
+		printf("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
 
 		/* write head to route */
 		if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
