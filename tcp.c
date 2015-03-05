@@ -63,7 +63,7 @@ int port_report(int webfd, int port, int en)
 	sprintf(buf, "%s:%d%s\r\n", SRV_DOMAIN, port, con);
 
 	if((ret = write(webfd, buf, BUFSIZE)) <= 0)
-		return -1;
+		return ret;
 
 	return 0;
 }
@@ -175,13 +175,13 @@ int read_line(int sockfd, char buf[])
 {
 	char *temp=buf;
 	char c;
-	int n;
+	int ret;
 
 	while(1)
 	{
-		n=read(sockfd,&c,1);
-		if(n<0)
-			return -1;
+		ret = read(sockfd,&c,1);
+		if(ret <= 0)
+			return ret;
 		else {
 			*temp++=c;
 
@@ -229,8 +229,10 @@ ssize_t http_read(int fd, char buf[])
 
 		if(ret > 0)
 			strcat(buf, temp);
-		else if(ret <= 0)
+		else if(ret == 0)
 			break;
+		else
+			return ret;
 
 		urlsize -= ret;
 		retsize += ret;
@@ -388,12 +390,14 @@ ssize_t http_write(int fd, char buf[], size_t count)
 	sprintf(temp, "UrlSize = %d\r\n", count);
 	ret = write(fd, temp, strlen(temp));
 	if(ret <= 0)
-		return -1;
+		return ret;
 
 	//printf("urlsize = %s\n", temp);
 
 	/* send reponse */
 	ret = write(fd, buf, count);
+	if(ret <= 0)
+		return ret;
 
 	return ret;
 }
@@ -402,7 +406,7 @@ ssize_t http_write(int fd, char buf[], size_t count)
 ssize_t pc_read_head(int pcfd, char urlmsg[], unsigned long *textLength)
 {
 	int ret, i;
-	char method[BUFSIZE], lineBuf[BUFSIZE];
+	char method[5], lineBuf[BUFSIZE];
 	char *p;
 	char size[20];
 	int retsize = 0;
@@ -410,7 +414,7 @@ ssize_t pc_read_head(int pcfd, char urlmsg[], unsigned long *textLength)
 	/* read first line */
 	ret = read_line(pcfd, method);
 	if(ret <= 0)
-		return -1;
+		return ret;
 
 	strcat(urlmsg, method);
 	retsize += ret;
@@ -418,8 +422,8 @@ ssize_t pc_read_head(int pcfd, char urlmsg[], unsigned long *textLength)
 	/* head */
 	while(1) {
 		ret = read_line(pcfd, lineBuf);
-		if(ret < 0)
-			return -1;
+		if(ret <= 0)
+			return ret;
 		else
 			strcat(urlmsg, lineBuf);
 
@@ -468,15 +472,15 @@ ssize_t pc_read_send_data(int pcfd, int routefd, unsigned long textLength)
 			textLength -= ret;
 
 			if(ret <= 0)
-				break;
+				return -1;
 			printf("aaaaaaaaaaaaa textLength=%ld, ret=%d, len=%d\n", textLength, ret, strlen(textBuf));
 
 			/* write to route */
 			if((ret = http_write(routefd, textBuf, ret)) <= 0)
-				return -1;
+				return ret;
 		}
 	}
-	printf("bbbbbbbbbbbbb\n");
+
 	return 0;
 }
 
@@ -484,6 +488,7 @@ int route_to_pc(int pcfd, int routefd)
 {
 	int ret;
 	char urlmsg[TCPSIZE];
+	int retsize = 0;
 
 	while(1) {
 		/* read form route */
@@ -491,10 +496,13 @@ int route_to_pc(int pcfd, int routefd)
 		if((ret = http_read(routefd, urlmsg)) <= 0)
 			return -1;
 
+		printf("route-%d-%d-%d\n", pcfd, ret, strlen(urlmsg));
+
 		if(strcmp(urlmsg, "end\r\n") == 0)
 			break;
 
-		printf("route-%d-%d-%d\n", pcfd, ret, strlen(urlmsg));
+		retsize += ret;
+
 		if(ret != strlen(urlmsg)) {
 			printf("urlmsg=%s\n", urlmsg);
 		}
@@ -502,12 +510,10 @@ int route_to_pc(int pcfd, int routefd)
 
 		/* write to pc */
 		if((ret = write(pcfd, urlmsg, ret)) <= 0)
-			return -1;
-
-		printf("write over~~~~~~~~~\n");
+			return ret;
 	}
 
-	return 0;
+	return retsize;
 }
 
 void *pc_and_server(void *arg)
@@ -518,61 +524,63 @@ void *pc_and_server(void *arg)
 	unsigned long textLength;
 	sInfo *cl = pcinfo->cl;
 
+	/* read head form pc */
+	textLength = 0;
+	memset(urlmsg, '\0', sizeof(urlmsg));
+	if((ret = pc_read_head(pcinfo->pc_client_fd, urlmsg, &textLength)) <= 0) {
+		pcinfo->cl = NULL;
+		if(pcinfo->pc_client_fd > 2)
+			close(pcinfo->pc_client_fd);
+		free(pcinfo);
+		pthread_exit(NULL);
+	}
+
 	pthread_mutex_lock(&(cl->mutex));		// deal one connect until it closed
 
-	if(cl->roustat==1 && cl->pcstat==1) {
-		printf("\n########################\n");
-		/* read head form pc */
-		textLength = 0;
-		memset(urlmsg, '\0', sizeof(urlmsg));
-		if((ret = pc_read_head(pcinfo->pc_client_fd, urlmsg, &textLength)) < 0) {
-			close(pcinfo->pc_client_fd);
-			pthread_exit(NULL);
-		}
+	do {
+		if(cl->roustat==1 && cl->pcstat==1) {
+			printf("\n########################\n");
 
-		modify_http_head(urlmsg);
-		modify_connect_close(urlmsg);
+			modify_http_head(urlmsg);
+			modify_connect_close(urlmsg);
 
-		//printf("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
-		printf("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
+			//printf("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
+			printf("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
 
-		/* write head to route */
-		if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
-			cl->pcstat = 0;
-			cl->roustat = 0;
-			close(pcinfo->pc_client_fd);
-			pthread_exit(NULL);
-		}
-
-		//printf("@@@@@@textLength = %d\n", textLength);
-
-		/* POST data send */
-		if(textLength > 0) {
-			if((ret = pc_read_send_data(pcinfo->pc_client_fd, cl->routefd, textLength)) < 0) {
-				close(pcinfo->pc_client_fd);
-				pthread_exit(NULL);
+			/* write head to route */
+			if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
+				cl->pcstat = 0;
+				cl->roustat = 0;
+				break;
 			}
+
+			//printf("@@@@@@textLength = %d\n", textLength);
+
+			/* POST data send */
+			if(textLength > 0) {
+				if((ret = pc_read_send_data(pcinfo->pc_client_fd, cl->routefd, textLength)) < 0) {
+					break;
+				}
+			}
+
+			/* send end msg */
+			if((ret = http_write(cl->routefd, "end\r\n", strlen("end\r\n"))) <= 0) {
+				cl->pcstat = 0;
+				cl->roustat = 0;
+				break;
+			}
+
+
+			/* route to pc */
+			ret = route_to_pc(pcinfo->pc_client_fd, cl->routefd);
+			if(ret < 0) {
+				cl->roustat = 0;
+				cl->pcstat = 0;
+				break;
+			}
+
 		}
-
-		/* send end msg */
-		if((ret = http_write(cl->routefd, "end\r\n", strlen("end\r\n"))) <= 0) {
-			cl->pcstat = 0;
-			cl->roustat = 0;
-			close(pcinfo->pc_client_fd);
-			pthread_exit(NULL);
-		}
-
-
-		/* route to pc */
-		ret = route_to_pc(pcinfo->pc_client_fd, cl->routefd);
-		if(ret < 0) {
-			cl->roustat = 0;
-			cl->pcstat = 0;
-			close(pcinfo->pc_client_fd);
-			pthread_exit(NULL);
-		}
-
-	}
+	}while(0);
 
 	pthread_mutex_unlock(&(cl->mutex));
 
