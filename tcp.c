@@ -195,7 +195,7 @@ int read_line(int sockfd, char buf[])
 }
 
 // 如果采用短连接，则直接可以通过服务器关闭连接来确定消息的传输长度
-ssize_t http_read(int fd, char buf[])
+ssize_t http_read(int fd, char *buf)
 {
 	int ret, i;
 	int urlsize = 0;
@@ -209,6 +209,9 @@ ssize_t http_read(int fd, char buf[])
 		return -1;
 
 	/* get urlmsg size: UrlSize = xxx\r\n */
+	if(strncmp(msgsize, "UrlSize", 7) != 0)
+		return -1;
+
 	i = 0;
 	p = msgsize + strlen("UrlSize = ");
 	while(*p != '\r')
@@ -227,8 +230,18 @@ ssize_t http_read(int fd, char buf[])
 		else
 			ret = read(fd, temp, urlsize);
 
-		if(ret > 0)
-			strcat(buf, temp);
+		if(ret > 0) {
+			// don't use strcat and strncpy, because sometimes jgp etc msg has '\0'
+			if(ret == strlen(temp))
+				strcat(buf, temp);
+			else {
+				int i = 0;
+				while(i < ret) {
+					*(buf+retsize+i) = temp[i];
+					i++;
+				}
+			}
+		}
 		else if(ret == 0)
 			break;
 		else
@@ -387,6 +400,7 @@ ssize_t http_write(int fd, char buf[], size_t count)
 	char temp[TCPSIZE];
 
 	/* send count first */
+	memset(temp, '\0', TCPSIZE);
 	sprintf(temp, "UrlSize = %d\r\n", count);
 	ret = write(fd, temp, strlen(temp));
 	if(ret <= 0)
@@ -475,6 +489,14 @@ ssize_t pc_read_send_data(int pcfd, int routefd, unsigned long textLength)
 				return -1;
 			printf("aaaaaaaaaaaaa textLength=%ld, ret=%d, len=%d\n", textLength, ret, strlen(textBuf));
 
+			/* debug, read fireware write to cxt.bin, compile result is ok */
+            #if 0
+			FILE *fp;
+			fp = fopen("./cxt.bin", "ab");
+			fwrite(textBuf, ret, 1, fp);
+			fclose(fp);
+			#endif
+
 			/* write to route */
 			if((ret = http_write(routefd, textBuf, ret)) <= 0)
 				return ret;
@@ -512,7 +534,7 @@ int route_to_pc(int pcfd, int routefd)
 		if((ret = write(pcfd, urlmsg, ret)) <= 0)
 			return ret;
 	}
-
+	printf("route-end-%d\n", retsize);
 	return retsize;
 }
 
@@ -538,7 +560,7 @@ void *pc_and_server(void *arg)
 	pthread_mutex_lock(&(cl->mutex));		// deal one connect until it closed
 
 	do {
-		if(cl->roustat==1 && cl->pcstat==1) {
+		if(cl->roustat==1 && (cl->pcstat==1 || pcinfo->pc_client_fd > 2)) {
 			printf("\n########################\n");
 
 			modify_http_head(urlmsg);
@@ -570,6 +592,7 @@ void *pc_and_server(void *arg)
 				break;
 			}
 
+			printf("pc-%d-end\n", pcinfo->pc_client_fd);
 
 			/* route to pc */
 			ret = route_to_pc(pcinfo->pc_client_fd, cl->routefd);
