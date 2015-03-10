@@ -58,6 +58,8 @@ int port_report(int webfd, int port, int en)
 
 	if(en == 0)
 		con = "  has break!!!!!!!!";
+	else if(en == 2)
+		con = "  route has no connect!!!!!!";
 
 	memset(buf, '\0', sizeof(buf));
 	sprintf(buf, "%s:%d%s\r\n", SRV_DOMAIN, port, con);
@@ -344,10 +346,14 @@ void *web_and_c(void *arg)
 				cl->tcannel = 1;		// cannel pc_and_server thread
 				cl->pcstat = 0;
 				if(cl->pcsrvfd != 0) { close(cl->pcsrvfd);  cl->pcsrvfd=-1; }
-				arrayNum[cl->pcsrvport - 10000] = 0;
+				if(cl->pcsrvport >= 10000)
+					arrayNum[cl->pcsrvport - 10000] = 0;
 				port_report(web_fd, cl->pcsrvport, 0);
 				cl->pcsrvport = -1;
 			}
+		}
+		else {
+			port_report(web_fd, cl->pcsrvport, 2);
 		}
 
 		close(web_fd);
@@ -364,31 +370,41 @@ void *pc_accept(void *arg)
 	unsigned int addrlen = sizeof(struct sockaddr_in);
 	int pcfd;
 	pthread_t tid;
+	int ret;
+	fd_set fds;
+	struct timeval timeout = {3, 0};
 
 	cl->pcstat= 1;			// pc connect
 
 	while(1) {
-		if(cl->tcannel == 1) {		// cannel thread
+		if(cl->tcannel == 1) 		// cannel thread
 			break;
-		}
 
 		if(cl->roustat == 0)
 			break;
 
-		if( (pcfd = accept(cl->pcsrvfd, (struct sockaddr *)&client_addr, &addrlen)) < 0)
+		FD_ZERO(&fds);
+		FD_SET(cl->pcsrvfd, &fds);
+		ret = select(cl->pcsrvfd+1, &fds, NULL, NULL, &timeout);
+		if(ret <= 0)
 			continue;
+		else {
+			if( (pcfd = accept(cl->pcsrvfd, (struct sockaddr *)&client_addr, &addrlen)) < 0)
+				continue;
 
-		//printf("\npc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
+			//printf("\npc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
 
-		/* pc <--> server */
-		pcInfo *pcinfo = (pcInfo *)malloc(sizeof(pcInfo));
-		pcinfo->pc_client_fd= pcfd;
-		pcinfo->cl = cl;
+			/* pc <--> server */
+			pcInfo *pcinfo = (pcInfo *)malloc(sizeof(pcInfo));
+			pcinfo->pc_client_fd= pcfd;
+			pcinfo->cl = cl;
 
-		deta_pthread_create(&tid, pc_and_server, pcinfo);
+			deta_pthread_create(&tid, pc_and_server, pcinfo);
+		}
 	}
 
-	close(pcfd);
+	close(cl->pcsrvfd);
+	//printf("pc_accept exit!!!\n");
 
 	pthread_exit(NULL);
 }
@@ -573,6 +589,8 @@ void *pc_and_server(void *arg)
 			if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
+				if(cl->pcsrvport >= 10000)
+					arrayNum[cl->pcsrvport - 10000] = 0;
 				break;
 			}
 
@@ -589,6 +607,8 @@ void *pc_and_server(void *arg)
 			if((ret = http_write(cl->routefd, "end\r\n", strlen("end\r\n"))) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
+				if(cl->pcsrvport >= 10000)
+					arrayNum[cl->pcsrvport - 10000] = 0;
 				break;
 			}
 
@@ -599,6 +619,8 @@ void *pc_and_server(void *arg)
 			if(ret < 0) {
 				cl->roustat = 0;
 				cl->pcstat = 0;
+				if(cl->pcsrvport >= 10000)
+					arrayNum[cl->pcsrvport - 10000] = 0;
 				break;
 			}
 
