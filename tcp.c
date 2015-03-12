@@ -31,14 +31,14 @@ int phpcdata(char mac[], char *en, char buf[])
 }
 
 /* create radom port(10000 ~ 20000) */
-int arrayNum[10000]={0};
+int arrayNum[10000]={-1};
 int port_create()
 {
 	int pcsrv_port = 0;
 	int i, num = 20000;
 
 	for(i=10000; i<num; i++) {
-		if(arrayNum[i-10000] == 0) {
+		if(arrayNum[i-10000] == -1) {
 			arrayNum[i-10000] = i;
 			break;
 		}
@@ -95,7 +95,7 @@ int getlocalip(void)
     ip = inet_ntoa(((struct sockaddr_in*)(&buf[intr].ifr_addr))->sin_addr);
 	strcpy(SRV_IP, ip);
 
-	printf("local_ip = %s\n", SRV_IP);
+	DEBUG_PRINT("local_ip = %s\n", SRV_IP);
 
 	return 0;
 }
@@ -221,7 +221,7 @@ ssize_t http_read(int fd, char *buf)
 	size[i] = '\0';
 	urlsize = atoi(size);
 
-	//printf("urlsize = %d, urlsize=%s, size=%s\n", urlsize, msgsize, size);
+	//DEBUG_PRINT("urlsize = %d, urlsize=%s, size=%s\n", urlsize, msgsize, size);
 
 	/* read url msg */
 	while(urlsize > 0) {
@@ -234,15 +234,7 @@ ssize_t http_read(int fd, char *buf)
 
 		if(ret > 0) {
 			// don't use strcat and strncpy, because sometimes jgp etc msg has '\0'
-			if(ret == strlen(temp))
-				strcat(buf, temp);
-			else {
-				int i = 0;
-				while(i < ret) {
-					*(buf+retsize+i) = temp[i];
-					i++;
-				}
-			}
+			memcpy(buf+retsize, temp, ret);
 		}
 		else if(ret == 0)
 			break;
@@ -311,7 +303,7 @@ void *web_and_c(void *arg)
 		en = '0';
 		phpcdata(macmsg, &en, buf);
 
-		printf("macmsg=%s, en=%c\n", macmsg, en);
+		DEBUG_PRINT("macmsg=%s, en=%c\n", macmsg, en);
 
 		is_mac = 0;
 		list_for_each_entry(cl, &clients, list) {
@@ -347,7 +339,7 @@ void *web_and_c(void *arg)
 				cl->pcstat = 0;
 				if(cl->pcsrvfd != 0) { close(cl->pcsrvfd);  cl->pcsrvfd=-1; }
 				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = 0;
+					arrayNum[cl->pcsrvport - 10000] = -1;
 				port_report(web_fd, cl->pcsrvport, 0);
 				cl->pcsrvport = -1;
 			}
@@ -377,10 +369,7 @@ void *pc_accept(void *arg)
 	cl->pcstat= 1;			// pc connect
 
 	while(1) {
-		if(cl->tcannel == 1) 		// cannel thread
-			break;
-
-		if(cl->roustat == 0)
+		if(cl->tcannel == 1)  		// cannel thread
 			break;
 
 		FD_ZERO(&fds);
@@ -392,7 +381,27 @@ void *pc_accept(void *arg)
 			if( (pcfd = accept(cl->pcsrvfd, (struct sockaddr *)&client_addr, &addrlen)) < 0)
 				continue;
 
-			//printf("\npc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
+			//DEBUG_PRINT("\npc--%s is comming... \n", inet_ntoa(client_addr.sin_addr));
+
+			if(cl->roustat == 0) {
+				char buf[1024];
+				char *repose = "<html><body><h1>route has not connect!!!!</h1></body></html>";
+				sprintf(buf,
+					"HTTP/1.0 200 OK\r\n"
+					"Connection: close\r\n"
+					"Content-Type: text/html\r\n"
+					"Content-Length: %d\r\n"
+					"\r\n"
+					"%s",
+
+					strlen(repose),
+					repose
+					);
+
+				write(pcfd, buf, strlen(buf));
+				close(pcfd);
+				continue;
+			}
 
 			/* pc <--> server */
 			pcInfo *pcinfo = (pcInfo *)malloc(sizeof(pcInfo));
@@ -404,7 +413,12 @@ void *pc_accept(void *arg)
 	}
 
 	close(cl->pcsrvfd);
-	//printf("pc_accept exit!!!\n");
+	cl->pcsrvfd=-1;
+	if(cl->pcsrvport >= 10000)
+		arrayNum[cl->pcsrvport - 10000] = -1;
+	cl->pcsrvport = -1;
+	cl->pcstat = 0;
+	DEBUG_PRINT("pc_accept exit!!!\n");
 
 	pthread_exit(NULL);
 }
@@ -422,7 +436,7 @@ ssize_t http_write(int fd, char buf[], size_t count)
 	if(ret <= 0)
 		return ret;
 
-	//printf("urlsize = %s\n", temp);
+	//DEBUG_PRINT("urlsize = %s\n", temp);
 
 	/* send reponse */
 	ret = write(fd, buf, count);
@@ -503,7 +517,7 @@ ssize_t pc_read_send_data(int pcfd, int routefd, unsigned long textLength)
 
 			if(ret <= 0)
 				return -1;
-			printf("aaaaaaaaaaaaa textLength=%ld, ret=%d, len=%d\n", textLength, ret, strlen(textBuf));
+			DEBUG_PRINT("aaaaaaaaaaaaa textLength=%ld, ret=%d, len=%d\n", textLength, ret, strlen(textBuf));
 
 			/* debug, read fireware write to cxt.bin, compile result is ok */
             #if 0
@@ -534,23 +548,19 @@ int route_to_pc(int pcfd, int routefd)
 		if((ret = http_read(routefd, urlmsg)) <= 0)
 			return -1;
 
-		printf("route-%d-%d-%d\n", pcfd, ret, strlen(urlmsg));
+		DEBUG_PRINT("route-%d-%d-%d\n", pcfd, ret, strlen(urlmsg));
 
 		if(strcmp(urlmsg, "end\r\n") == 0)
 			break;
 
 		retsize += ret;
 
-		if(ret != strlen(urlmsg)) {
-			printf("urlmsg=%s\n", urlmsg);
-		}
-		//printf("route read-%d-%d : %s \n", pcfd, ret, urlmsg);
-
+		//DEBUG_PRINT("route read-%d-%d : %s \n", pcfd, ret, urlmsg);
 		/* write to pc */
 		if((ret = write(pcfd, urlmsg, ret)) <= 0)
 			return ret;
 	}
-	printf("route-end-%d\n", retsize);
+	DEBUG_PRINT("route-end-%d\n", retsize);
 	return retsize;
 }
 
@@ -577,24 +587,24 @@ void *pc_and_server(void *arg)
 
 	do {
 		if(cl->roustat==1 && (cl->pcstat==1 || pcinfo->pc_client_fd > 2)) {
-			printf("\n########################\n");
+			DEBUG_PRINT("\n########################\n");
 
 			modify_http_head(urlmsg);
 			modify_connect_close(urlmsg);
 
-			//printf("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
-			printf("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
+			//DEBUG_PRINT("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
+			DEBUG_PRINT("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
 
 			/* write head to route */
 			if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
 				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = 0;
+					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
 
-			//printf("@@@@@@textLength = %d\n", textLength);
+			//DEBUG_PRINT("@@@@@@textLength = %d\n", textLength);
 
 			/* POST data send */
 			if(textLength > 0) {
@@ -608,19 +618,19 @@ void *pc_and_server(void *arg)
 				cl->pcstat = 0;
 				cl->roustat = 0;
 				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = 0;
+					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
 
-			printf("pc-%d-end\n", pcinfo->pc_client_fd);
+			DEBUG_PRINT("pc-%d-end\n", pcinfo->pc_client_fd);
 
 			/* route to pc */
 			ret = route_to_pc(pcinfo->pc_client_fd, cl->routefd);
-			if(ret < 0) {
+			if(ret <= 0) {
 				cl->roustat = 0;
 				cl->pcstat = 0;
 				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = 0;
+					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
 

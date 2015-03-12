@@ -53,17 +53,14 @@ int main(void)
 			pthread_mutex_init(&(cl->mutex), NULL);
 			list_add_tail(&cl->list, &clients);
 
-			printf("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
+			DEBUG_PRINT("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
 		}
 		else {
 			cl->routefd = rclient_fd;
-			cl->pcsrvfd = -1;
-			cl->pcsrvport = -1;
-			cl->pcstat = 0;
 			cl->roustat = 1;	// route connect
 			pthread_mutex_init(&(cl->mutex), NULL);
 
-			printf("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
+			DEBUG_PRINT("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
 		}
 	}
 

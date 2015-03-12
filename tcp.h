@@ -10,6 +10,13 @@
 
 #include "farserver.h"
 
+#define DEBUG
+#ifdef DEBUG
+	#define DEBUG_PRINT(format, ...)	printf(format, ##__VA_ARGS__)
+#else
+	#define DEBUG_PRINT(format, ...)
+#endif
+
 typedef struct {
 	struct list_head list;
 
