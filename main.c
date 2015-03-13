@@ -3,7 +3,27 @@
 
 struct list_head clients = LIST_HEAD_INIT(clients);
 
-int main(void)
+extern int main_farserver(void);
+
+int main(int argc, char *argv[])
+{
+	pid_t pid;
+
+	while(1) {
+		/* program auto reboot */
+		pid = fork();
+
+		if(pid > 0)
+			pid = wait(NULL);
+		else if(pid == 0) {
+			main_farserver();
+		}
+	}
+
+	return 0;
+}
+
+int main_farserver(void)
 {
 	int routefd, rclient_fd, cfd;
 	struct sockaddr_in client_addr;
@@ -34,7 +54,7 @@ int main(void)
 
 		is_mac = 0;
 		list_for_each_entry(cl, &clients, list) {
-			if (strncmp(buf, cl->mac, 17) == 0) {
+			if (strncmp(buf, cl->mac, 15) == 0) {
 				is_mac = 1;
 				break;
 			}

@@ -18,6 +18,12 @@ int deta_pthread_create(pthread_t *thread, void *(*start_routine) (void *), void
 int phpcdata(char mac[], char *en, char buf[])
 {
 	char *p;
+	int i = 0;
+
+	while(buf[i] != '\0') {
+		buf[i] = tolower(buf[i]);
+		i++;
+	}
 
 	/* mac */
 	p = strtok(buf, ";");
@@ -53,16 +59,28 @@ int port_create()
 int port_report(int webfd, int port, int en)
 {
 	char buf[BUFSIZE];
-	char *con = " ";
 	int ret;
 
-	if(en == 0)
-		con = "  has break!!!!!!!!";
-	else if(en == 2)
-		con = "  route has no connect!!!!!!";
-
 	memset(buf, '\0', sizeof(buf));
-	sprintf(buf, "%s:%d%s\r\n", SRV_DOMAIN, port, con);
+	switch(en) {
+		case 0:
+			sprintf(buf, "0;");		//   has break!!!!!!!!
+			break;
+
+		case 1:
+			sprintf(buf, "1;%s:%d;", SRV_DOMAIN, port);		//  route connect!!!!!!	(1;rz.wifisz.com:10000;)
+			break;
+
+		case 2:
+			sprintf(buf, "2;");		//  route has no connect!!!!!!
+			break;
+
+		default:
+			sprintf(buf, "%d;", en);
+			break;
+	}
+
+	//printf("en=%d, buf=%s\n", en, buf);
 
 	if((ret = write(webfd, buf, BUFSIZE)) <= 0)
 		return ret;
@@ -334,7 +352,7 @@ void *web_and_c(void *arg)
 				port_report(web_fd, cl->pcsrvport, 1);
 			}
 			/* uncontrol */
-			else {
+			else if(en == '0'){
 				cl->tcannel = 1;		// cannel pc_and_server thread
 				cl->pcstat = 0;
 				if(cl->pcsrvfd != 0) { close(cl->pcsrvfd);  cl->pcsrvfd=-1; }
@@ -342,6 +360,9 @@ void *web_and_c(void *arg)
 					arrayNum[cl->pcsrvport - 10000] = -1;
 				port_report(web_fd, cl->pcsrvport, 0);
 				cl->pcsrvport = -1;
+			}
+			else {
+				port_report(web_fd, cl->pcsrvport, en);
 			}
 		}
 		else {
