@@ -617,7 +617,7 @@ void *pc_and_server(void *arg)
 			DEBUG_PRINT("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
 
 			/* write head to route */
-			if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
+			if((ret = http_write(cl->routefd, urlmsg, ret)) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
 				if(cl->pcsrvport >= 10000)
