@@ -254,8 +254,6 @@ ssize_t http_read(int fd, char *buf)
 			// don't use strcat and strncpy, because sometimes jgp etc msg has '\0'
 			memcpy(buf+retsize, temp, ret);
 		}
-		else if(ret == 0)
-			break;
 		else
 			return ret;
 
@@ -593,6 +591,8 @@ void *pc_and_server(void *arg)
 	unsigned long textLength;
 	sInfo *cl = pcinfo->cl;
 
+	DEBUG_PRINT("\n@@ pc--%d is comming... \n", pcinfo->pc_client_fd);
+
 	/* read head form pc */
 	textLength = 0;
 	memset(urlmsg, '\0', sizeof(urlmsg));
@@ -601,6 +601,7 @@ void *pc_and_server(void *arg)
 		if(pcinfo->pc_client_fd > 2)
 			close(pcinfo->pc_client_fd);
 		free(pcinfo);
+		DEBUG_PRINT("\n@@2pc--%d is end... \n", pc_fd);
 		pthread_exit(NULL);
 	}
 
@@ -616,8 +617,17 @@ void *pc_and_server(void *arg)
 			//DEBUG_PRINT("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
 			DEBUG_PRINT("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
 
-			/* write head to route */
-			if((ret = http_write(cl->routefd, urlmsg, ret)) <= 0) {
+			/* send start msg(use write), use to tcp keep alive, see farclient */
+			if((ret = write(cl->routefd, "start\r\n", strlen("start\r\n"))) <= 0) {
+				cl->pcstat = 0;
+				cl->roustat = 0;
+				if(cl->pcsrvport >= 10000)
+					arrayNum[cl->pcsrvport - 10000] = -1;
+				break;
+			}
+
+			/* write head to route (zhu: urlmsg size has change, don't use ret) */
+			if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
 				if(cl->pcsrvport >= 10000)
@@ -664,6 +674,8 @@ void *pc_and_server(void *arg)
 	if(pcinfo->pc_client_fd > 2)
 		close(pcinfo->pc_client_fd);
 	free(pcinfo);
+
+	DEBUG_PRINT("\n@@pc--%d is end... \n", pcinfo->pc_client_fd);
 
 	pthread_exit(NULL);
 }

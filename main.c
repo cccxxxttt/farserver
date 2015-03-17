@@ -73,14 +73,18 @@ int main_farserver(void)
 			pthread_mutex_init(&(cl->mutex), NULL);
 			list_add_tail(&cl->list, &clients);
 
-			DEBUG_PRINT("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
+			DEBUG_PRINT("\nroute-%d--%s is comming...   mac=%s\n", cl->routefd, inet_ntoa(client_addr.sin_addr), cl->mac);
 		}
 		else {
-			cl->routefd = rclient_fd;
+			if(cl->routefd>0 && cl->routefd!=rclient_fd) {
+				printf("\nroutefd-%d\n", cl->routefd);
+				close(cl->routefd);
+				cl->routefd = rclient_fd;
+			}
 			cl->roustat = 1;	// route connect
 			pthread_mutex_init(&(cl->mutex), NULL);
 
-			DEBUG_PRINT("\nroute--%s is comming...   mac=%s\n", inet_ntoa(client_addr.sin_addr), cl->mac);
+			DEBUG_PRINT("route-%d--%s is comming...   mac=%s\n", cl->routefd, inet_ntoa(client_addr.sin_addr), cl->mac);
 		}
 	}
 
