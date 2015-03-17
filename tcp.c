@@ -119,6 +119,8 @@ int getlocalip(void)
 }
 
 
+
+
 /* analyse response url data, judge connect */
 int response_close(char urlmsg[])
 {
@@ -454,6 +456,7 @@ ssize_t http_write(int fd, char buf[], size_t count)
 	ret = write(fd, temp, strlen(temp));
 	if(ret <= 0)
 		return ret;
+	printf("urlsize=%d, wret=%d\n", count, ret);
 
 	//DEBUG_PRINT("urlsize = %s\n", temp);
 
@@ -461,6 +464,8 @@ ssize_t http_write(int fd, char buf[], size_t count)
 	ret = write(fd, buf, count);
 	if(ret <= 0)
 		return ret;
+
+	printf("wret=%d\n", ret);
 
 	return ret;
 }
@@ -591,7 +596,8 @@ void *pc_and_server(void *arg)
 	unsigned long textLength;
 	sInfo *cl = pcinfo->cl;
 
-	DEBUG_PRINT("\n@@ pc--%d is comming... \n", pcinfo->pc_client_fd);
+	int pc_fd = pcinfo->pc_client_fd;
+	DEBUG_PRINT("\n@@ pc--%d is comming... \n", pc_fd);
 
 	/* read head form pc */
 	textLength = 0;
@@ -617,6 +623,7 @@ void *pc_and_server(void *arg)
 			//DEBUG_PRINT("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
 			DEBUG_PRINT("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
 
+		#if 0
 			/* send start msg(use write), use to tcp keep alive, see farclient */
 			if((ret = write(cl->routefd, "start\r\n", strlen("start\r\n"))) <= 0) {
 				cl->pcstat = 0;
@@ -625,6 +632,7 @@ void *pc_and_server(void *arg)
 					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
+		#endif
 
 			/* write head to route (zhu: urlmsg size has change, don't use ret) */
 			if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
@@ -675,7 +683,7 @@ void *pc_and_server(void *arg)
 		close(pcinfo->pc_client_fd);
 	free(pcinfo);
 
-	DEBUG_PRINT("\n@@pc--%d is end... \n", pcinfo->pc_client_fd);
+	DEBUG_PRINT("\n@@pc--%d is end... \n", pc_fd);
 
 	pthread_exit(NULL);
 }
