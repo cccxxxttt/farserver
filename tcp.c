@@ -1,3 +1,14 @@
+/********************************************************************\
+ *                                                                  *
+ * $Id$                                                             *
+ * @file tcp.c                                                      *
+ * @brief tcp functions                                             *
+ * @author Copyright (C) 2015 cxt <xiaotaohuoxiao@163.com>          *
+ * @start 2015-2-28                                                 *
+ * @end   2015-3-18                                                 *
+ *                                                                  *
+\********************************************************************/
+
 #include "tcp.h"
 
 extern struct list_head clients;
@@ -40,17 +51,18 @@ int phpcdata(char mac[], char *en, char buf[])
 int arrayNum[10000]={-1};
 int port_create()
 {
-	int pcsrv_port = 0;
-	int i, num = 20000;
+	int pcsrv_port = -1;
+	int i, num = 10000;
 
-	for(i=10000; i<num; i++) {
-		if(arrayNum[i-10000] == -1) {
-			arrayNum[i-10000] = i;
+	for(i=0; i<num; i++) {
+		if(arrayNum[i] == -1) {
+			arrayNum[i] = i + 10000;
 			break;
 		}
 	}
 
-	pcsrv_port = i;
+	if(i < 10000)
+		pcsrv_port = arrayNum[i];
 
 	return pcsrv_port;
 }
@@ -117,8 +129,6 @@ int getlocalip(void)
 
 	return 0;
 }
-
-
 
 
 /* analyse response url data, judge connect */
@@ -266,6 +276,36 @@ ssize_t http_read(int fd, char *buf)
 	return retsize;
 }
 
+/* socket set keepalive, timeout can set tcp stat, write() and read() return 0 */
+int socket_set_keepalive(int fd, int idle, int intv, int cnt)
+{
+	int alive;
+
+	/* Set: use keepalive on fd */
+	alive = 1;
+	if (setsockopt(fd, SOL_SOCKET, SO_KEEPALIVE, &alive, sizeof alive) != 0)
+		return -1;
+
+	/* idle秒钟无数据，触发保活机制，发送保活包 */
+	if(setsockopt (fd, SOL_TCP, TCP_KEEPIDLE, &idle, sizeof idle) != 0)
+		return -1;
+
+	/* 如果没有收到回应，则intv秒钟后重发保活包 */
+	if (setsockopt (fd, SOL_TCP, TCP_KEEPINTVL, &intv, sizeof intv) != 0)
+		return -1;
+
+	/* 连续cnt次没收到保活包，视为连接失效 */
+	if (setsockopt (fd, SOL_TCP, TCP_KEEPCNT, &cnt, sizeof cnt) != 0)
+		return -1;
+
+	return 1;
+}
+
+/* when one socket close, write twice takes a SIGPIPE, exit progrem */
+void protect_progrem(void)
+{
+	signal(SIGPIPE, SIG_IGN);
+}
 
 int sock_server(int port)
 {
@@ -307,6 +347,11 @@ void *web_and_c(void *arg)
 	pthread_t tid;
 	int is_mac = 0;
 
+	/* arrayNum[] init */
+	int i;
+	for(i=0; i<10000; i++)
+		arrayNum[i] = -1;
+
 	while(1) {
 		if( (web_fd = accept(cfd, (struct sockaddr *)&client_addr, &addrlen)) < 0)
 			continue;
@@ -339,13 +384,15 @@ void *web_and_c(void *arg)
 					/* create port */
 					pcsrv_port = port_create();
 
-					pcsrv_fd = sock_server(pcsrv_port);
-					cl->pcsrvfd = pcsrv_fd;
-					cl->pcsrvport = pcsrv_port;
+					if(pcsrv_port >= 10000) {
+						pcsrv_fd = sock_server(pcsrv_port);
+						cl->pcsrvfd = pcsrv_fd;
+						cl->pcsrvport = pcsrv_port;
 
-					/* pc <--> server */
-					deta_pthread_create(&tid, pc_accept, cl);
-					cl->tcannel = 0;
+						/* pc <--> server */
+						deta_pthread_create(&tid, pc_accept, cl);
+						cl->tcannel = 0;
+					}
 				}
 
 				/* report port to php */
@@ -456,7 +503,6 @@ ssize_t http_write(int fd, char buf[], size_t count)
 	ret = write(fd, temp, strlen(temp));
 	if(ret <= 0)
 		return ret;
-	printf("urlsize=%d, wret=%d\n", count, ret);
 
 	//DEBUG_PRINT("urlsize = %s\n", temp);
 
@@ -464,8 +510,6 @@ ssize_t http_write(int fd, char buf[], size_t count)
 	ret = write(fd, buf, count);
 	if(ret <= 0)
 		return ret;
-
-	printf("wret=%d\n", ret);
 
 	return ret;
 }
@@ -565,12 +609,13 @@ int route_to_pc(int pcfd, int routefd)
 	int ret;
 	char urlmsg[TCPSIZE];
 	int retsize = 0;
+	int pc_err_flag = 0;
 
 	while(1) {
 		/* read form route */
 		memset(urlmsg, '\0', sizeof(urlmsg));
 		if((ret = http_read(routefd, urlmsg)) <= 0)
-			return -1;
+			return RU_MSG_ERR;
 
 		DEBUG_PRINT("route-%d-%d-%d\n", pcfd, ret, strlen(urlmsg));
 
@@ -581,9 +626,14 @@ int route_to_pc(int pcfd, int routefd)
 
 		//DEBUG_PRINT("route read-%d-%d : %s \n", pcfd, ret, urlmsg);
 		/* write to pc */
-		if((ret = write(pcfd, urlmsg, ret)) <= 0)
-			return ret;
+		if(pc_err_flag == 0)
+			if((ret = write(pcfd, urlmsg, ret)) <= 0)
+				pc_err_flag = 1;
 	}
+
+	if(pc_err_flag == 1)
+		return PC_MSG_ERR;
+
 	DEBUG_PRINT("route-end-%d\n", retsize);
 	return retsize;
 }
@@ -596,7 +646,9 @@ void *pc_and_server(void *arg)
 	unsigned long textLength;
 	sInfo *cl = pcinfo->cl;
 
+	#ifdef DEBUG
 	int pc_fd = pcinfo->pc_client_fd;
+	#endif
 	DEBUG_PRINT("\n@@ pc--%d is comming... \n", pc_fd);
 
 	/* read head form pc */
@@ -623,13 +675,11 @@ void *pc_and_server(void *arg)
 			//DEBUG_PRINT("\ncom~~~ pcfd=%d, pcstat=%d\n", pcinfo->pc_client_fd, cl->pcstat);
 			DEBUG_PRINT("pc-%d : %s", pcinfo->pc_client_fd, urlmsg);
 
-		#if 0
+		#if 1
 			/* send start msg(use write), use to tcp keep alive, see farclient */
 			if((ret = write(cl->routefd, "start\r\n", strlen("start\r\n"))) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
-				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
 		#endif
@@ -638,8 +688,6 @@ void *pc_and_server(void *arg)
 			if((ret = http_write(cl->routefd, urlmsg, strlen(urlmsg))) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
-				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
 
@@ -656,8 +704,6 @@ void *pc_and_server(void *arg)
 			if((ret = http_write(cl->routefd, "end\r\n", strlen("end\r\n"))) <= 0) {
 				cl->pcstat = 0;
 				cl->roustat = 0;
-				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
 
@@ -665,11 +711,13 @@ void *pc_and_server(void *arg)
 
 			/* route to pc */
 			ret = route_to_pc(pcinfo->pc_client_fd, cl->routefd);
-			if(ret <= 0) {
+			if(ret == PC_MSG_ERR) {
+				cl->pcstat = 0;
+				break;
+			}
+			else if(ret == RU_MSG_ERR) {
 				cl->roustat = 0;
 				cl->pcstat = 0;
-				if(cl->pcsrvport >= 10000)
-					arrayNum[cl->pcsrvport - 10000] = -1;
 				break;
 			}
 

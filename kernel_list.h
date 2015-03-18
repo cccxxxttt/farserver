@@ -1,3 +1,14 @@
+/********************************************************************\
+ *                                                                  *
+ * $Id$                                                             *
+ * @file kernel_list.h                                              *
+ * @brief kernel list functions                                     *
+ * @author Copyright (C) 2015 cxt <xiaotaohuoxiao@163.com>          *
+ * @start 2015-2-28                                                 *
+ * @end   2015-3-18                                                 *
+ *                                                                  *
+\********************************************************************/
+
 #ifndef _LINUX_LIST_H
 #define _LINUX_LIST_H
 

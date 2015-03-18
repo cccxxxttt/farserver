@@ -1,3 +1,14 @@
+/********************************************************************\
+ *                                                                  *
+ * $Id$                                                             *
+ * @file farserver.h                                                *
+ * @brief server params                                             *
+ * @author Copyright (C) 2015 cxt <xiaotaohuoxiao@163.com>          *
+ * @start 2015-2-28                                                 *
+ * @end   2015-3-18                                                 *
+ *                                                                  *
+\********************************************************************/
+
 #ifndef __FARSERVER_H
 #define __FARSERVER_H
 

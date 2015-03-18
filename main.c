@@ -1,3 +1,14 @@
+/********************************************************************\
+ *                                                                  *
+ * $Id$                                                             *
+ * @file main.c                                                     *
+ * @brief main loop                                                 *
+ * @author Copyright (C) 2015 cxt <xiaotaohuoxiao@163.com>          *
+ * @start 2015-2-28                                                 *
+ * @end   2015-3-18                                                 *
+ *                                                                  *
+\********************************************************************/
+
 #include "farserver.h"
 #include "tcp.h"
 
@@ -34,6 +45,8 @@ int main_farserver(void)
 	pthread_t tid;
 	int is_mac = 0;
 
+	protect_progrem();
+
 	getlocalip();
 
 	/* server: web <--> c */
@@ -46,6 +59,8 @@ int main_farserver(void)
 		if( (rclient_fd = accept(routefd, (struct sockaddr *)&client_addr, &addrlen)) < 0)
 			continue;
 
+		//socket_set_keepalive(rclient_fd, 60, 5, 3);		// keep_alive check time: (60+5)*3
+
 		/* read once */
 		if((ret = read(rclient_fd, buf, BUFSIZE)) <= 0) {
 			close(rclient_fd);
@@ -54,7 +69,7 @@ int main_farserver(void)
 
 		is_mac = 0;
 		list_for_each_entry(cl, &clients, list) {
-			if (strncmp(buf, cl->mac, 15) == 0) {
+			if (strncmp(buf, cl->mac, 17) == 0) {
 				is_mac = 1;
 				break;
 			}
