@@ -276,6 +276,19 @@ ssize_t http_read(int fd, char *buf)
 	return retsize;
 }
 
+void get_local_time(char time_buf[])
+{
+	time_t timep;
+	struct tm *tm;
+
+	time(&timep);
+	tm = localtime(&timep);
+
+	sprintf(time_buf, "%d/%d/%d-%d:%d:%d",
+		(1900+tm->tm_year), (1+tm->tm_mon), tm->tm_mday,
+		tm->tm_hour, tm->tm_min, tm->tm_sec);
+}
+
 /* socket set keepalive, timeout can set tcp stat, write() and read() return 0 */
 int socket_set_keepalive(int fd, int idle, int intv, int cnt)
 {

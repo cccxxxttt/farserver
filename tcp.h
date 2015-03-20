@@ -25,7 +25,7 @@
 
 #include "farserver.h"
 
-#define DEBUG
+//#define DEBUG
 #ifdef DEBUG
 	#define DEBUG_PRINT(format, ...)	printf(format, ##__VA_ARGS__)
 #else
@@ -65,6 +65,7 @@ int deta_pthread_create(pthread_t *thread, void *(*start_routine) (void *), void
 int getlocalip(void);
 int socket_set_keepalive(int fd, int idle, int intv, int cnt);
 void protect_progrem(void);
+void get_local_time(char time_buf[]);
 int sock_server(int port);
 void *route_and_server(void *arg);
 void *web_and_c(void *arg);
