@@ -31,4 +31,3 @@ case "$1" in
 		stop_program
 	;;
 esac
-
