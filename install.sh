@@ -18,3 +18,6 @@ sed -i '/'$bootsh' start/d' $install_file
 
 # add farserver autoboot
 echo $path"/"$bootsh" start" >> $install_file
+
+# boot the farserver
+$path"/"$bootsh start
